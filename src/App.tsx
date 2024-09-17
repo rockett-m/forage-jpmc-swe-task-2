@@ -2,12 +2,14 @@ import React, { Component } from 'react';
 import DataStreamer, { ServerRespond } from './DataStreamer';
 import Graph from './Graph';
 import './App.css';
+import {setInterval} from "timers";
 
 /**
  * State declaration for <App />
  */
 interface IState {
   data: ServerRespond[],
+  showGraph: boolean,
 }
 
 /**
@@ -22,6 +24,7 @@ class App extends Component<{}, IState> {
       // data saves the server responds.
       // We use this state to parse data down to the child element (Graph) as element property
       data: [],
+      showGraph: false,
     };
   }
 
@@ -29,18 +32,37 @@ class App extends Component<{}, IState> {
    * Render Graph react component with state.data parse as property data
    */
   renderGraph() {
-    return (<Graph data={this.state.data}/>)
+    // set x axis as time
+    // set y axis as price
+    // legend - all unique stocks
+    // show the graph after user clicks the stream button
+    if (this.state.showGraph) {
+      return (<Graph data={this.state.data}/>)
+    }
   }
 
   /**
    * Get new data from server and update the state with the new data
    */
   getDataFromServer() {
-    DataStreamer.getData((serverResponds: ServerRespond[]) => {
-      // Update the state by creating a new array of data that consists of
-      // Previous data in the state and the new data from server
-      this.setState({ data: [...this.state.data, ...serverResponds] });
-    });
+    let start = 0;
+    // keep requesting data until the server doesn't respond
+    // refresh rate: 100ms
+    const refresh_rate = setInterval(() => {
+      DataStreamer.getData((serverResponds: ServerRespond[]) => {
+        // Update the state by creating a new array of data that consists of
+        // Previous data in the state and the new data from server
+        this.setState({
+          data: [...this.state.data, ...serverResponds],
+          showGraph: true,
+        });
+      });
+      start++;
+      if (start >= 1000) {
+        clearInterval(refresh_rate);
+      }
+    }, 100);
+    // this.setState({ data: [...this.state.data, ...serverResponds] });
   }
 
   /**

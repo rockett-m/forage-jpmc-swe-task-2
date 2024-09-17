@@ -1,0 +1,318 @@
+From e3d40a824bb27e60d438be29296e7b450ba2640d Mon Sep 17 00:00:00 2001
+From: Morgan Rockett <morgan.rockett@tufts.edu>
+Date: Mon, 16 Sep 2024 21:52:14 -0400
+Subject: [PATCH] fix: no more duplicates from datafeed; graphing added w/
+ refresh rate 100ms
+
+---
+ ...icates-from-datafeed-graphing-added-.patch | 155 ++++++++++++++++++
+ datafeed/server3.py                           |   2 +-
+ src/App.tsx                                   |  34 +++-
+ src/Graph.tsx                                 |  22 ++-
+ 4 files changed, 202 insertions(+), 11 deletions(-)
+ create mode 100644 0001-fix-no-more-duplicates-from-datafeed-graphing-added-.patch
+
+diff --git a/0001-fix-no-more-duplicates-from-datafeed-graphing-added-.patch b/0001-fix-no-more-duplicates-from-datafeed-graphing-added-.patch
+new file mode 100644
+index 0000000..6299e6d
+--- /dev/null
++++ b/0001-fix-no-more-duplicates-from-datafeed-graphing-added-.patch
+@@ -0,0 +1,155 @@
++From 2f7be2b3dc5f241c7277741958fdf00e303cf4a1 Mon Sep 17 00:00:00 2001
++From: Morgan Rockett <morgan.rockett@tufts.edu>
++Date: Mon, 16 Sep 2024 21:52:14 -0400
++Subject: [PATCH] fix: no more duplicates from datafeed; graphing added w/
++ refresh rate 100ms
++
++---
++ datafeed/server3.py |  2 +-
++ src/App.tsx         | 34 ++++++++++++++++++++++++++++------
++ src/Graph.tsx       | 22 ++++++++++++++++++----
++ 3 files changed, 47 insertions(+), 11 deletions(-)
++
++diff --git a/datafeed/server3.py b/datafeed/server3.py
++index 68f4659..2e4fdd9 100644
++--- a/datafeed/server3.py
+++++ b/datafeed/server3.py
++@@ -21,6 +21,7 @@
++ # from itertools import izip
++ from random import normalvariate, random
++ from datetime import timedelta, datetime
+++from time import sleep
++ 
++ import csv
++ import dateutil.parser
++@@ -236,7 +237,6 @@ def run(routes, host='0.0.0.0', port=8080):
++     thread.start()
++     print('HTTP server started on port 8080')
++     while True:
++-        from time import sleep
++         sleep(1)
++     server.shutdown()
++     server.start()
++diff --git a/src/App.tsx b/src/App.tsx
++index 0728518..58b2838 100755
++--- a/src/App.tsx
+++++ b/src/App.tsx
++@@ -2,12 +2,14 @@ import React, { Component } from 'react';
++ import DataStreamer, { ServerRespond } from './DataStreamer';
++ import Graph from './Graph';
++ import './App.css';
+++import {setInterval} from "timers";
++ 
++ /**
++  * State declaration for <App />
++  */
++ interface IState {
++   data: ServerRespond[],
+++  showGraph: boolean,
++ }
++ 
++ /**
++@@ -22,6 +24,7 @@ class App extends Component<{}, IState> {
++       // data saves the server responds.
++       // We use this state to parse data down to the child element (Graph) as element property
++       data: [],
+++      showGraph: false,
++     };
++   }
++ 
++@@ -29,18 +32,37 @@ class App extends Component<{}, IState> {
++    * Render Graph react component with state.data parse as property data
++    */
++   renderGraph() {
++-    return (<Graph data={this.state.data}/>)
+++    // set x axis as time
+++    // set y axis as price
+++    // legend - all unique stocks
+++    // show the graph after user clicks the stream button
+++    if (this.state.showGraph) {
+++      return (<Graph data={this.state.data}/>)
+++    }
++   }
++ 
++   /**
++    * Get new data from server and update the state with the new data
++    */
++   getDataFromServer() {
++-    DataStreamer.getData((serverResponds: ServerRespond[]) => {
++-      // Update the state by creating a new array of data that consists of
++-      // Previous data in the state and the new data from server
++-      this.setState({ data: [...this.state.data, ...serverResponds] });
++-    });
+++    let start = 0;
+++    // keep requesting data until the server doesn't respond
+++    // refresh rate: 100ms
+++    const refresh_rate = setInterval(() => {
+++      DataStreamer.getData((serverResponds: ServerRespond[]) => {
+++        // Update the state by creating a new array of data that consists of
+++        // Previous data in the state and the new data from server
+++        this.setState({
+++          data: [...this.state.data, ...serverResponds],
+++          showGraph: true,
+++        });
+++      });
+++      start++;
+++      if (start >= 1000) {
+++        clearInterval(refresh_rate);
+++      }
+++    }, 100);
+++    // this.setState({ data: [...this.state.data, ...serverResponds] });
++   }
++ 
++   /**
++diff --git a/src/Graph.tsx b/src/Graph.tsx
++index 3b2a7da..f2108ec 100644
++--- a/src/Graph.tsx
+++++ b/src/Graph.tsx
++@@ -14,7 +14,7 @@ interface IProps {
++  * Perspective library adds load to HTMLElement prototype.
++  * This interface acts as a wrapper for Typescript compiler.
++  */
++-interface PerspectiveViewerElement {
+++interface PerspectiveViewerElement extends HTMLElement {
++   load: (table: Table) => void,
++ }
++ 
++@@ -32,7 +32,7 @@ class Graph extends Component<IProps, {}> {
++ 
++   componentDidMount() {
++     // Get element to attach the table from the DOM.
++-    const elem: PerspectiveViewerElement = document.getElementsByTagName('perspective-viewer')[0] as unknown as PerspectiveViewerElement;
+++    const elem = document.getElementsByTagName('perspective-viewer')[0] as unknown as PerspectiveViewerElement;
++ 
++     const schema = {
++       stock: 'string',
++@@ -46,10 +46,24 @@ class Graph extends Component<IProps, {}> {
++     }
++     if (this.table) {
++       // Load the `table` in the `<perspective-viewer>` DOM reference.
++-
+++      window.perspective.viewer().load(this.table);
++       // Add more Perspective configurations here.
++       elem.load(this.table);
++-    }
+++      // y_line is continuous line chart
+++      elem.setAttribute('view', 'y_line');
+++      // tell stocks apart
+++      elem.setAttribute('column-pivots', '["stock"]');
+++      // x-axis is time
+++      elem.setAttribute('row-pivots', '["timestamp"]');
+++      // peak price naturally = peak of column
+++      elem.setAttribute('columns', '["top_ask_price"]');
+++      // prevent duplicate data, squash it
+++      elem.setAttribute('aggregates',
+++                        `{"top_ask_price": "avg",
+++                        "top_bid_price": "avg",
+++                        "timestamp": "distinct_count"}`
+++                        );
+++                    }
++   }
++ 
++   componentDidUpdate() {
++-- 
++2.43.0
++
+diff --git a/datafeed/server3.py b/datafeed/server3.py
+index 68f4659..2e4fdd9 100644
+--- a/datafeed/server3.py
++++ b/datafeed/server3.py
+@@ -21,6 +21,7 @@
+ # from itertools import izip
+ from random import normalvariate, random
+ from datetime import timedelta, datetime
++from time import sleep
+ 
+ import csv
+ import dateutil.parser
+@@ -236,7 +237,6 @@ def run(routes, host='0.0.0.0', port=8080):
+     thread.start()
+     print('HTTP server started on port 8080')
+     while True:
+-        from time import sleep
+         sleep(1)
+     server.shutdown()
+     server.start()
+diff --git a/src/App.tsx b/src/App.tsx
+index 0728518..58b2838 100755
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -2,12 +2,14 @@ import React, { Component } from 'react';
+ import DataStreamer, { ServerRespond } from './DataStreamer';
+ import Graph from './Graph';
+ import './App.css';
++import {setInterval} from "timers";
+ 
+ /**
+  * State declaration for <App />
+  */
+ interface IState {
+   data: ServerRespond[],
++  showGraph: boolean,
+ }
+ 
+ /**
+@@ -22,6 +24,7 @@ class App extends Component<{}, IState> {
+       // data saves the server responds.
+       // We use this state to parse data down to the child element (Graph) as element property
+       data: [],
++      showGraph: false,
+     };
+   }
+ 
+@@ -29,18 +32,37 @@ class App extends Component<{}, IState> {
+    * Render Graph react component with state.data parse as property data
+    */
+   renderGraph() {
+-    return (<Graph data={this.state.data}/>)
++    // set x axis as time
++    // set y axis as price
++    // legend - all unique stocks
++    // show the graph after user clicks the stream button
++    if (this.state.showGraph) {
++      return (<Graph data={this.state.data}/>)
++    }
+   }
+ 
+   /**
+    * Get new data from server and update the state with the new data
+    */
+   getDataFromServer() {
+-    DataStreamer.getData((serverResponds: ServerRespond[]) => {
+-      // Update the state by creating a new array of data that consists of
+-      // Previous data in the state and the new data from server
+-      this.setState({ data: [...this.state.data, ...serverResponds] });
+-    });
++    let start = 0;
++    // keep requesting data until the server doesn't respond
++    // refresh rate: 100ms
++    const refresh_rate = setInterval(() => {
++      DataStreamer.getData((serverResponds: ServerRespond[]) => {
++        // Update the state by creating a new array of data that consists of
++        // Previous data in the state and the new data from server
++        this.setState({
++          data: [...this.state.data, ...serverResponds],
++          showGraph: true,
++        });
++      });
++      start++;
++      if (start >= 1000) {
++        clearInterval(refresh_rate);
++      }
++    }, 100);
++    // this.setState({ data: [...this.state.data, ...serverResponds] });
+   }
+ 
+   /**
+diff --git a/src/Graph.tsx b/src/Graph.tsx
+index 3b2a7da..f2108ec 100644
+--- a/src/Graph.tsx
++++ b/src/Graph.tsx
+@@ -14,7 +14,7 @@ interface IProps {
+  * Perspective library adds load to HTMLElement prototype.
+  * This interface acts as a wrapper for Typescript compiler.
+  */
+-interface PerspectiveViewerElement {
++interface PerspectiveViewerElement extends HTMLElement {
+   load: (table: Table) => void,
+ }
+ 
+@@ -32,7 +32,7 @@ class Graph extends Component<IProps, {}> {
+ 
+   componentDidMount() {
+     // Get element to attach the table from the DOM.
+-    const elem: PerspectiveViewerElement = document.getElementsByTagName('perspective-viewer')[0] as unknown as PerspectiveViewerElement;
++    const elem = document.getElementsByTagName('perspective-viewer')[0] as unknown as PerspectiveViewerElement;
+ 
+     const schema = {
+       stock: 'string',
+@@ -46,10 +46,24 @@ class Graph extends Component<IProps, {}> {
+     }
+     if (this.table) {
+       // Load the `table` in the `<perspective-viewer>` DOM reference.
+-
++      window.perspective.viewer().load(this.table);
+       // Add more Perspective configurations here.
+       elem.load(this.table);
+-    }
++      // y_line is continuous line chart
++      elem.setAttribute('view', 'y_line');
++      // tell stocks apart
++      elem.setAttribute('column-pivots', '["stock"]');
++      // x-axis is time
++      elem.setAttribute('row-pivots', '["timestamp"]');
++      // peak price naturally = peak of column
++      elem.setAttribute('columns', '["top_ask_price"]');
++      // prevent duplicate data, squash it
++      elem.setAttribute('aggregates',
++                        `{"top_ask_price": "avg",
++                        "top_bid_price": "avg",
++                        "timestamp": "distinct_count"}`
++                        );
++                    }
+   }
+ 
+   componentDidUpdate() {
+-- 
+2.43.0
+
